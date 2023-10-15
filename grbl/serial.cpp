@@ -77,7 +77,6 @@ uint8_t serial_get_tx_buffer_count() {
 }
 
 void serial_init() {
-
     LL_USART_EnableIT_RXNE(USART2);
 
     //    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_2);
@@ -106,24 +105,19 @@ void serial_init() {
 
 // Writes one byte to the TX serial buffer. Called by main program.
 void serial_write(uint8_t data) {
-    //    while (!LL_USART_IsActiveFlag_TXE(USART2))
-    //        continue;
-    //    USART2->TDR = data;
-    // #define MEM_TO_UART_CH2 DMA1, LL_DMA_CHANNEL_2
-
-    //    LL_DMA_DisableChannel(MEM_TO_UART_CH2);
-    //    LL_DMA_SetMemoryAddress(MEM_TO_UART_CH2, uint32_t(&data));
-    //    LL_DMA_SetPeriphAddress(MEM_TO_UART_CH2, LL_USART_DMA_GetRegAddr(USART2, LL_USART_DMA_REG_DATA_TRANSMIT));
-    //    LL_USART_EnableDMAReq_TX(USART2);
-
-    //    const auto size_ = 1;
-    //    LL_DMA_SetDataLength(MEM_TO_UART_CH2, size_);
-    //    LL_DMA_EnableChannel(MEM_TO_UART_CH2);
-    //    while(!LL_DMA_IsActiveFlag_TC2(DMA1)) { }
-    //    LL_DMA_ClearFlag_TC2(DMA1);
-    //    LL_DMA_DisableChannel(MEM_TO_UART_CH2);
-    //    return;
-    //    LL_USART_DisableIT_TXE(USART2);
+//    static uint8_t last;
+//    switch(data >> 6) {
+//    case 0b11:
+//        last = data;
+//        return;
+//    case 0b10:
+//        data &= 0b0011'1111;
+//        data |= last << 6;
+//        break;
+//    default:
+//        data;
+//        break;
+//    }
 
     // Calculate next head
     uint8_t next_head = serial_tx.head + 1;
@@ -131,24 +125,18 @@ void serial_write(uint8_t data) {
         next_head = 0;
 
     // Wait until there is space in the buffer
-//    while(next_head == serial_tx.tail) {
-//        // TODO: Restructure st_prep_buffer() calls to be executed here during a long print.
-//        if(sys_rt_exec_state & EXEC::RESET) {
-//            return;
-//        } // Only check for abort to avoid an endless loop.
-//    }
+    while(next_head == serial_tx.tail) {
+        // TODO: Restructure st_prep_buffer() calls to be executed here during a long print.
+        if(sys_rt_exec_state & EXEC::RESET) return; // Only check for abort to avoid an endless loop.
+    }
 
     // Store data and advance head
     serial_tx.buffer[serial_tx.head] = data;
     serial_tx.head = next_head;
 
     // Enable Data Register Empty Interrupt to make sure tx-streaming is running
-    //    UCSR0B |= (1 << UDRIE0);
-    if(data == '\n') { // && !LL_DMA_IsEnabledChannel(DMA1, LL_DMA_CHANNEL_2)
-        LL_USART_EnableIT_TXE(USART2);
-        // LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_2, serial_tx.count());
-        // LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_2);
-    }
+    // LL_USART_EnableIT_TXE(USART2);
+    LL_USART_EnableIT_TC(USART2);
 }
 
 // extern "C" void DMA1_Channel2_IRQHandler(void) {
@@ -165,7 +153,7 @@ void serial_write(uint8_t data) {
 
 // Data Register Empty Interrupt handler
 extern "C" void ISR_SERIAL_UDRE() {
-    if(!(USART2->ISR & USART_ISR_TXE))
+    if(!(USART2->ISR & USART_ISR_TC /*USART_ISR_TXE*/))
         return;
     uint8_t tail = serial_tx.tail; // Temporary serial_tx_buffer_tail (to optimize for volatile)
 
@@ -173,15 +161,13 @@ extern "C" void ISR_SERIAL_UDRE() {
     USART2->TDR = serial_tx.buffer[tail];
 
     // Update tail position
-    ++tail;
-    if(tail == serial_tx.size)
-        tail = 0;
+    if(++tail == serial_tx.size) tail = 0;
 
     serial_tx.tail = tail;
 
-    // Turn off Data Register Empty Interrupt to stop tx-streaming if this concludes the transfer
-    if(tail == serial_tx.head)
-        LL_USART_DisableIT_TXE(USART2);
+    if(tail == serial_tx.head) // Turn off Data Register Empty Interrupt to stop tx-streaming if this concludes the transfer
+                               //        LL_USART_DisableIT_TXE(USART2);
+        LL_USART_DisableIT_TC(USART2);
 }
 
 // Fetches the first byte in the serial read buffer. Called by main program.
@@ -192,9 +178,7 @@ uint8_t serial_read() {
     } else {
         uint8_t data = serial_rx.buffer[tail];
 
-        tail++;
-        if(tail == serial_rx.size)
-            tail = 0;
+        if(++tail == serial_rx.size) tail = 0;
         serial_rx.tail = tail;
 
         return data;
